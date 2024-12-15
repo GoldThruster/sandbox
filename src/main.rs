@@ -1,11 +1,14 @@
-use std::{env, process::Command};
+use std::process::Command;
+
+use clap::Parser;
+
+mod cli;
 
 fn main() {
-    let mut args = env::args();
-    let prg = args.nth(1).unwrap();
+    let args = cli::Cli::parse();
 
-    Command::new(&prg)
-        .args(args)
+    Command::new(&args.program)
+        .args(args.args)
         .status()
-        .expect(&format!("Unable to run {prg}"));
+        .expect(&format!("Unable to run {}", args.program));
 }
