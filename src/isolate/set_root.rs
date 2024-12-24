@@ -12,16 +12,26 @@ use nix::{
     unistd::pivot_root,
 };
 
-#[derive(Debug)]
+use thiserror::Error;
+
+#[derive(Error, Debug)]
 pub enum Error {
-    CantUnshareMounts(io::Error),
-    CantMakeRootMountSlave(io::Error),
-    CantMakeNewRootMountPoint(PathBuf, io::Error),
-    CantCreateOldRoot(io::Error),
-    CantPivotRoot(io::Error),
-    CantMakeRootWorkingDir(io::Error),
-    CantUnmountOldRoot(io::Error),
-    CantRemoveOldRoot(io::Error),
+    #[error("unable to unshare mount namespace")]
+    CantUnshareMounts(#[source] io::Error),
+    #[error("unable to make mount root slave")]
+    CantMakeRootMountSlave(#[source] io::Error),
+    #[error("unable to make new root ({0}) a mount point")]
+    CantMakeNewRootMountPoint(PathBuf, #[source] io::Error),
+    #[error("unable create directory to hold old root mount")]
+    CantCreateOldRoot(#[source] io::Error),
+    #[error("unable to pivot root")]
+    CantPivotRoot(#[source] io::Error),
+    #[error("unable to make '/' the working directory")]
+    CantMakeRootWorkingDir(#[source] io::Error),
+    #[error("unable to unmount old root")]
+    CantUnmountOldRoot(#[source] io::Error),
+    #[error("unable remove old root")]
+    CantRemoveOldRoot(#[source] io::Error),
 }
 
 const OLD_ROOT: &str = "old-root";
