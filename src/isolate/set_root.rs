@@ -1,7 +1,6 @@
 use std::{
-    collections::HashMap,
     env,
-    fs::{self, File},
+    fs::{self},
     io,
     path::{Path, PathBuf},
 };
@@ -12,14 +11,16 @@ use nix::{
     sched::{unshare, CloneFlags},
     unistd::pivot_root,
 };
+
+#[derive(Debug)]
 pub enum Error {
-    CantUnshareMounts(Errno),
-    CantMakeRootMountSlave(Errno),
-    CantMakeNewRootMountPoint(PathBuf, Errno),
+    CantUnshareMounts(io::Error),
+    CantMakeRootMountSlave(io::Error),
+    CantMakeNewRootMountPoint(PathBuf, io::Error),
     CantCreateOldRoot(io::Error),
-    CantPivotRoot(Errno),
+    CantPivotRoot(io::Error),
     CantMakeRootWorkingDir(io::Error),
-    CantUnmountOldRoot(Errno),
+    CantUnmountOldRoot(io::Error),
     CantRemoveOldRoot(io::Error),
 }
 
@@ -27,24 +28,26 @@ const OLD_ROOT: &str = "old-root";
 
 pub fn set_root(new_root: &Path) -> Result<(), Error> {
     // 1. detach mount namespace from host
-    unshare(CloneFlags::CLONE_NEWNS).map_err(Error::CantUnshareMounts)?;
+    unshare(CloneFlags::CLONE_NEWNS).map_err(normalize_error.compose(Error::CantUnshareMounts))?;
     set_mount_flags(Path::new("/"), MsFlags::MS_SLAVE | MsFlags::MS_REC)
-        .map_err(Error::CantMakeRootMountSlave)?;
+        .map_err(normalize_error.compose(Error::CantMakeRootMountSlave))?;
 
     // 2. assure {new_root} is a mount point
-    make_mount_point(new_root)
-        .map_err(|e| Error::CantMakeNewRootMountPoint(new_root.to_path_buf(), e))?;
+    make_mount_point(new_root).map_err(|e| {
+        Error::CantMakeNewRootMountPoint(new_root.to_path_buf(), normalize_error(e))
+    })?;
 
     // 3. setup {OLD_ROOT} directory
     let old_root = new_root.join(OLD_ROOT);
     fs::create_dir(&old_root).map_err(Error::CantCreateOldRoot)?;
 
     // 4. pivot root
-    pivot_root(new_root, &old_root).map_err(Error::CantPivotRoot)?;
+    pivot_root(new_root, &old_root).map_err(normalize_error.compose(Error::CantPivotRoot))?;
     env::set_current_dir("/").map_err(Error::CantMakeRootWorkingDir)?;
 
     // 5. remove {OLD_ROOT} directory
-    umount2(OLD_ROOT, MntFlags::MNT_DETACH).map_err(Error::CantUnmountOldRoot)?;
+    umount2(OLD_ROOT, MntFlags::MNT_DETACH)
+        .map_err(normalize_error.compose(Error::CantUnmountOldRoot))?;
     fs::remove_dir(OLD_ROOT).map_err(Error::CantRemoveOldRoot)?;
 
     Ok(())
@@ -62,4 +65,18 @@ fn make_mount_point(target: &Path) -> Result<(), Errno> {
         MsFlags::MS_BIND | MsFlags::MS_REC,
         None,
     )
+}
+
+trait Compose<Args, O>: Fn(Args) -> O {
+    fn compose<C>(&self, g: impl Fn(O) -> C) -> impl Fn(Args) -> C;
+}
+
+impl<A, B, F: Fn(A) -> B> Compose<A, B> for F {
+    fn compose<C>(&self, g: impl Fn(B) -> C) -> impl Fn(A) -> C {
+        move |a| g(self(a))
+    }
+}
+
+fn normalize_error(e: Errno) -> io::Error {
+    io::Error::from_raw_os_error(e as i32)
 }
