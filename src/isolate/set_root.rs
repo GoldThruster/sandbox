@@ -22,7 +22,7 @@ pub enum Error {
     CantMakeRootMountSlave(#[source] io::Error),
     #[error("unable to make new root ({0}) a mount point")]
     CantMakeNewRootMountPoint(PathBuf, #[source] io::Error),
-    #[error("unable create directory to hold old root mount")]
+    #[error("unable to create directory to hold old root mount")]
     CantCreateOldRoot(#[source] io::Error),
     #[error("unable to pivot root")]
     CantPivotRoot(#[source] io::Error),
@@ -30,7 +30,7 @@ pub enum Error {
     CantMakeRootWorkingDir(#[source] io::Error),
     #[error("unable to unmount old root")]
     CantUnmountOldRoot(#[source] io::Error),
-    #[error("unable remove old root")]
+    #[error("unable to remove old root")]
     CantRemoveOldRoot(#[source] io::Error),
 }
 
