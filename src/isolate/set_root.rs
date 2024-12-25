@@ -58,9 +58,7 @@ pub fn set_root(new_root: &Path) -> Result<(), Error> {
     // 5. remove {OLD_ROOT} directory
     umount2(OLD_ROOT, MntFlags::MNT_DETACH)
         .map_err(normalize_error.compose(Error::CantUnmountOldRoot))?;
-    fs::remove_dir(OLD_ROOT).map_err(Error::CantRemoveOldRoot)?;
-
-    Ok(())
+    fs::remove_dir(OLD_ROOT).map_err(Error::CantRemoveOldRoot)
 }
 
 fn set_mount_flags(target: &Path, flags: MsFlags) -> Result<(), Errno> {
