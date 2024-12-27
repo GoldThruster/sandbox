@@ -15,13 +15,13 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("'{1}' is not a directory")]
-    NotADirectory(#[source] io::Error, PathBuf), //`new_root` is not a directory  /
+    NotADirectory(#[source] io::Error, PathBuf),
     #[error("CAP_SYS_ADMIN and editing permission to new root are required")]
-    PermissionDenied(#[source] io::Error), //permissions do not allow editing `new_root` or the user doesn't have the capacity required to operate mounts, and pivoting \___ OUTSIDE THE CONTROL OF THIS FUNCTION
+    PermissionDenied(#[source] io::Error),
     #[error("the current root is not a mount point")]
-    RootIsNotAMountPoint(#[source] io::Error), //                                                                                                                       /
+    RootIsNotAMountPoint(#[source] io::Error),
     #[error("{0}")]
-    Io(#[source] io::Error), //
+    Io(#[source] io::Error),
 }
 
 fn ctx_error(path: &Path, err: io::Error) -> Error {
