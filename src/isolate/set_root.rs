@@ -1,7 +1,5 @@
 use std::{
-    env,
-    fs::{self},
-    io,
+    env, fs, io,
     path::{Path, PathBuf},
 };
 
@@ -9,7 +7,7 @@ use nix::{
     errno::Errno,
     mount::{mount, umount2, MntFlags, MsFlags},
     sched::{unshare, CloneFlags},
-    unistd::pivot_root,
+    unistd,
 };
 
 use thiserror::Error;
@@ -45,7 +43,7 @@ fn mounting_error(path: &Path, err: io::Error) -> Error {
     }
 }
 
-const OLD_ROOT: &str = "old-root";
+const OLD_ROOT: &str = "./old-root";
 
 pub fn set_root(new_root: &Path) -> Result<(), Error> {
     // 1. detach mount namespace from host
@@ -57,18 +55,58 @@ pub fn set_root(new_root: &Path) -> Result<(), Error> {
     make_mount_point(new_root).map_err(|err| ctx_error(new_root, normalize_error(err)))?;
 
     // 3. setup {OLD_ROOT} directory
-    let old_root = new_root.join(OLD_ROOT);
-    fs::create_dir(&old_root).map_err(|err| ctx_error(new_root, err))?;
+    env::set_current_dir(new_root).map_err(|err| ctx_error(new_root, err))?;
+    let old_root = TmpDir::new(Path::new(OLD_ROOT)).map_err(|err| ctx_error(new_root, err))?;
 
     // 4. pivot root
-    pivot_root(new_root, &old_root)
-        .map_err(|err| mounting_error(new_root, normalize_error(err)))?;
-    env::set_current_dir("/").map_err(|err| ctx_error(new_root, err))?;
+    let _ =
+        pivot_root(Path::new("."), old_root.path()).map_err(|err| mounting_error(new_root, err))?;
+    env::set_current_dir("/").map_err(|err| ctx_error(new_root, err))
+}
 
-    // 5. remove {OLD_ROOT} directory
-    umount2(OLD_ROOT, MntFlags::MNT_DETACH)
-        .map_err(|err| ctx_error(new_root, normalize_error(err)))?;
-    fs::remove_dir(OLD_ROOT).map_err(|err| ctx_error(new_root, err))
+struct TmpDir<'a>(&'a Path);
+struct TmpMount<'a>(&'a Path);
+
+impl TmpDir<'_> {
+    fn new(path: &'_ Path) -> Result<TmpDir<'_>, io::Error> {
+        fs::create_dir(path)?;
+        Ok(TmpDir(path))
+    }
+
+    fn path(&self) -> &'_ Path {
+        self.0
+    }
+}
+
+fn pivot_root<'a>(new_root: &'a Path, old_root: &'a Path) -> Result<TmpMount<'a>, io::Error> {
+    unistd::pivot_root(new_root, old_root).map_err(normalize_error)?;
+    old_root.strip_prefix(new_root).map_or_else(
+        |_| Err(io::Error::from(io::ErrorKind::InvalidInput)),
+        |v| Ok(TmpMount(v)),
+    )
+}
+
+impl Drop for TmpDir<'_> {
+    fn drop(&mut self) {
+        fs::remove_dir(self.0)
+            .map_err(|err| match err.kind() {
+                io::ErrorKind::NotFound => Ok(()),
+                _ => Err(err),
+            })
+            .unwrap();
+    }
+}
+
+impl Drop for TmpMount<'_> {
+    fn drop(&mut self) {
+        umount2(self.0, MntFlags::MNT_DETACH)
+            .map_err(normalize_error)
+            .map_err(|err| match err.kind() {
+                io::ErrorKind::NotFound => Ok(()),
+                _ => Err(err),
+            })
+            .unwrap();
+    }
 }
 
 fn set_mount_flags(target: &Path, flags: MsFlags) -> Result<(), Errno> {
