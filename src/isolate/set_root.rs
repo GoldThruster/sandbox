@@ -35,11 +35,8 @@ fn ctx_error(path: &Path, err: io::Error) -> Error {
 
 fn mounting_error(path: &Path, err: io::Error) -> Error {
     match err.kind() {
-        io::ErrorKind::NotADirectory => Error::NotADirectory(err, path.into()),
-        io::ErrorKind::NotFound => Error::NotADirectory(err, path.into()),
-        io::ErrorKind::PermissionDenied => Error::PermissionDenied(err),
         io::ErrorKind::InvalidInput => Error::RootIsNotAMountPoint(err),
-        _ => Error::Io(err),
+        _ => ctx_error(path, err),
     }
 }
 
