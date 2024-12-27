@@ -1,6 +1,7 @@
 use std::{
     env, fs, io,
     path::{Path, PathBuf},
+    thread::panicking,
 };
 
 use nix::{
@@ -11,6 +12,16 @@ use nix::{
 };
 
 use thiserror::Error;
+
+macro_rules! weak_panic {
+    ($($args:tt)*) => {
+        if panicking() {
+            println!($($args)*);
+        } else {
+            panic!($($args)*);
+        }
+    };
+}
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -90,7 +101,7 @@ impl Drop for TmpDir<'_> {
                 io::ErrorKind::NotFound => Ok(()),
                 _ => Err(err),
             })
-            .unwrap();
+            .unwrap_or_else(|_| weak_panic!("failed to cleanup TmpDir at {:?}", self.0));
     }
 }
 
@@ -102,7 +113,7 @@ impl Drop for TmpMount<'_> {
                 io::ErrorKind::NotFound => Ok(()),
                 _ => Err(err),
             })
-            .unwrap();
+            .unwrap_or_else(|_| weak_panic!("failed to cleanup TmpMount at {:?}", self.0));
     }
 }
 
