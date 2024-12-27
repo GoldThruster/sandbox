@@ -16,49 +16,59 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("unable to unshare mount namespace")]
-    CantUnshareMounts(#[source] io::Error),
-    #[error("unable to make mount root slave")]
-    CantMakeRootMountSlave(#[source] io::Error),
-    #[error("unable to make new root ({0}) a mount point")]
-    CantMakeNewRootMountPoint(PathBuf, #[source] io::Error),
-    #[error("unable to create directory to hold old root mount")]
-    CantCreateOldRoot(#[source] io::Error),
-    #[error("unable to pivot root")]
-    CantPivotRoot(#[source] io::Error),
-    #[error("unable to make '/' the working directory")]
-    CantMakeRootWorkingDir(#[source] io::Error),
-    #[error("unable to unmount old root")]
-    CantUnmountOldRoot(#[source] io::Error),
-    #[error("unable to remove old root")]
-    CantRemoveOldRoot(#[source] io::Error),
+    #[error("'{1}' is not a directory")]
+    NotADirectory(#[source] io::Error, PathBuf), //`new_root` is not a directory  /
+    #[error("CAP_SYS_ADMIN and editing permission to new root are required")]
+    PermissionDenied(#[source] io::Error), //permissions do not allow editing `new_root` or the user doesn't have the capacity required to operate mounts, and pivoting \___ OUTSIDE THE CONTROL OF THIS FUNCTION
+    #[error("the current root is not a mount point")]
+    RootIsNotAMountPoint(#[source] io::Error), //                                                                                                                       /
+    #[error("{0}")]
+    Io(#[source] io::Error), //
+}
+
+fn ctx_error(path: &Path, err: io::Error) -> Error {
+    match err.kind() {
+        io::ErrorKind::NotADirectory => Error::NotADirectory(err, path.into()),
+        io::ErrorKind::NotFound => Error::NotADirectory(err, path.into()),
+        io::ErrorKind::PermissionDenied => Error::PermissionDenied(err),
+        _ => Error::Io(err),
+    }
+}
+
+fn mounting_error(path: &Path, err: io::Error) -> Error {
+    match err.kind() {
+        io::ErrorKind::NotADirectory => Error::NotADirectory(err, path.into()),
+        io::ErrorKind::NotFound => Error::NotADirectory(err, path.into()),
+        io::ErrorKind::PermissionDenied => Error::PermissionDenied(err),
+        io::ErrorKind::InvalidInput => Error::RootIsNotAMountPoint(err),
+        _ => Error::Io(err),
+    }
 }
 
 const OLD_ROOT: &str = "old-root";
 
 pub fn set_root(new_root: &Path) -> Result<(), Error> {
     // 1. detach mount namespace from host
-    unshare(CloneFlags::CLONE_NEWNS).map_err(normalize_error.compose(Error::CantUnshareMounts))?;
+    unshare(CloneFlags::CLONE_NEWNS).map_err(|err| ctx_error(new_root, normalize_error(err)))?;
     set_mount_flags(Path::new("/"), MsFlags::MS_SLAVE | MsFlags::MS_REC)
-        .map_err(normalize_error.compose(Error::CantMakeRootMountSlave))?;
+        .map_err(|err| mounting_error(new_root, normalize_error(err)))?;
 
     // 2. assure {new_root} is a mount point
-    make_mount_point(new_root).map_err(|e| {
-        Error::CantMakeNewRootMountPoint(new_root.to_path_buf(), normalize_error(e))
-    })?;
+    make_mount_point(new_root).map_err(|err| ctx_error(new_root, normalize_error(err)))?;
 
     // 3. setup {OLD_ROOT} directory
     let old_root = new_root.join(OLD_ROOT);
-    fs::create_dir(&old_root).map_err(Error::CantCreateOldRoot)?;
+    fs::create_dir(&old_root).map_err(|err| ctx_error(new_root, err))?;
 
     // 4. pivot root
-    pivot_root(new_root, &old_root).map_err(normalize_error.compose(Error::CantPivotRoot))?;
-    env::set_current_dir("/").map_err(Error::CantMakeRootWorkingDir)?;
+    pivot_root(new_root, &old_root)
+        .map_err(|err| mounting_error(new_root, normalize_error(err)))?;
+    env::set_current_dir("/").map_err(|err| ctx_error(new_root, err))?;
 
     // 5. remove {OLD_ROOT} directory
     umount2(OLD_ROOT, MntFlags::MNT_DETACH)
-        .map_err(normalize_error.compose(Error::CantUnmountOldRoot))?;
-    fs::remove_dir(OLD_ROOT).map_err(Error::CantRemoveOldRoot)
+        .map_err(|err| ctx_error(new_root, normalize_error(err)))?;
+    fs::remove_dir(OLD_ROOT).map_err(|err| ctx_error(new_root, err))
 }
 
 fn set_mount_flags(target: &Path, flags: MsFlags) -> Result<(), Errno> {
@@ -73,16 +83,6 @@ fn make_mount_point(target: &Path) -> Result<(), Errno> {
         MsFlags::MS_BIND | MsFlags::MS_REC,
         None,
     )
-}
-
-trait Compose<Args, O>: Fn(Args) -> O {
-    fn compose<C>(&self, g: impl Fn(O) -> C) -> impl Fn(Args) -> C;
-}
-
-impl<A, B, F: Fn(A) -> B> Compose<A, B> for F {
-    fn compose<C>(&self, g: impl Fn(B) -> C) -> impl Fn(A) -> C {
-        move |a| g(self(a))
-    }
 }
 
 fn normalize_error(e: Errno) -> io::Error {
