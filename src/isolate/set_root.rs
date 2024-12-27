@@ -72,8 +72,15 @@ pub fn set_root(new_root: &Path) -> Result<(), Error> {
     env::set_current_dir("/").map_err(|err| ctx_error(new_root, err))
 }
 
+fn pivot_root<'a>(new_root: &'a Path, old_root: &'a Path) -> Result<TmpMount<'a>, io::Error> {
+    unistd::pivot_root(new_root, old_root).map_err(normalize_error)?;
+    old_root.strip_prefix(new_root).map_or_else(
+        |_| Err(io::Error::from(io::ErrorKind::InvalidInput)),
+        |v| Ok(TmpMount(v)),
+    )
+}
+
 struct TmpDir<'a>(&'a Path);
-struct TmpMount<'a>(&'a Path);
 
 impl TmpDir<'_> {
     fn new(path: &'_ Path) -> Result<TmpDir<'_>, io::Error> {
@@ -86,14 +93,6 @@ impl TmpDir<'_> {
     }
 }
 
-fn pivot_root<'a>(new_root: &'a Path, old_root: &'a Path) -> Result<TmpMount<'a>, io::Error> {
-    unistd::pivot_root(new_root, old_root).map_err(normalize_error)?;
-    old_root.strip_prefix(new_root).map_or_else(
-        |_| Err(io::Error::from(io::ErrorKind::InvalidInput)),
-        |v| Ok(TmpMount(v)),
-    )
-}
-
 impl Drop for TmpDir<'_> {
     fn drop(&mut self) {
         fs::remove_dir(self.0)
@@ -101,6 +100,8 @@ impl Drop for TmpDir<'_> {
             .unwrap_or_else(|_| weak_panic!("failed to cleanup TmpDir at {:?}", self.0));
     }
 }
+
+struct TmpMount<'a>(&'a Path);
 
 impl Drop for TmpMount<'_> {
     fn drop(&mut self) {
