@@ -97,10 +97,7 @@ fn pivot_root<'a>(new_root: &'a Path, old_root: &'a Path) -> Result<TmpMount<'a>
 impl Drop for TmpDir<'_> {
     fn drop(&mut self) {
         fs::remove_dir(self.0)
-            .map_err(|err| match err.kind() {
-                io::ErrorKind::NotFound => Ok(()),
-                _ => Err(err),
-            })
+            .map_err(allow_not_found)
             .unwrap_or_else(|_| weak_panic!("failed to cleanup TmpDir at {:?}", self.0));
     }
 }
@@ -109,11 +106,15 @@ impl Drop for TmpMount<'_> {
     fn drop(&mut self) {
         umount2(self.0, MntFlags::MNT_DETACH)
             .map_err(normalize_error)
-            .map_err(|err| match err.kind() {
-                io::ErrorKind::NotFound => Ok(()),
-                _ => Err(err),
-            })
+            .map_err(allow_not_found)
             .unwrap_or_else(|_| weak_panic!("failed to cleanup TmpMount at {:?}", self.0));
+    }
+}
+
+fn allow_not_found(src: io::Error) -> Result<(), io::Error> {
+    match src.kind() {
+        io::ErrorKind::NotFound => Ok(()),
+        _ => Err(src),
     }
 }
 
