@@ -1,5 +1,5 @@
 use std::{
-    env, fs, io,
+    env, io,
     path::{Path, PathBuf},
     thread::panicking,
 };
@@ -8,7 +8,7 @@ use nix::{
     errno::Errno,
     mount::{mount, umount2, MntFlags, MsFlags},
     sched::{unshare, CloneFlags},
-    unistd,
+    unistd, NixPath,
 };
 
 use thiserror::Error;
@@ -51,8 +51,6 @@ fn mounting_error(path: &Path, err: io::Error) -> Error {
     }
 }
 
-const OLD_ROOT: &str = "./old-root";
-
 pub fn set_root(new_root: &Path) -> Result<(), Error> {
     // 1. detach mount namespace from host
     unshare(CloneFlags::CLONE_NEWNS).map_err(|err| ctx_error(new_root, normalize_error(err)))?;
@@ -64,40 +62,27 @@ pub fn set_root(new_root: &Path) -> Result<(), Error> {
 
     // 3. setup {OLD_ROOT} directory
     env::set_current_dir(new_root).map_err(|err| ctx_error(new_root, err))?;
-    let old_root = TmpDir::new(Path::new(OLD_ROOT)).map_err(|err| ctx_error(new_root, err))?;
 
     // 4. pivot root
     let _ =
-        pivot_root(Path::new("."), old_root.path()).map_err(|err| mounting_error(new_root, err))?;
+        pivot_root(Path::new("."), Path::new(".")).map_err(|err| mounting_error(new_root, err))?;
     env::set_current_dir("/").map_err(|err| ctx_error(new_root, err))
 }
 
 fn pivot_root<'a>(new_root: &'a Path, old_root: &'a Path) -> Result<TmpMount<'a>, io::Error> {
     unistd::pivot_root(new_root, old_root).map_err(normalize_error)?;
+
     old_root.strip_prefix(new_root).map_or_else(
         |_| Err(io::Error::from(io::ErrorKind::InvalidInput)),
-        |v| Ok(TmpMount(v)),
+        |v| Ok(TmpMount(map_empty_to_current(v))),
     )
 }
 
-struct TmpDir<'a>(&'a Path);
-
-impl TmpDir<'_> {
-    fn new(path: &'_ Path) -> Result<TmpDir<'_>, io::Error> {
-        fs::create_dir(path)?;
-        Ok(TmpDir(path))
-    }
-
-    fn path(&self) -> &'_ Path {
-        self.0
-    }
-}
-
-impl Drop for TmpDir<'_> {
-    fn drop(&mut self) {
-        fs::remove_dir(self.0)
-            .map_err(allow_not_found)
-            .unwrap_or_else(|_| weak_panic!("failed to cleanup TmpDir at {:?}", self.0));
+fn map_empty_to_current(path: &Path) -> &Path {
+    if path.is_empty() {
+        Path::new(".")
+    } else {
+        path
     }
 }
 
