@@ -1,6 +1,11 @@
-#[derive(clap::Args)]
-pub struct Args {}
+use std::path::PathBuf;
 
-pub fn isolate_with_args(_args: Args) -> Result<(), super::Error> {
-    super::isolate()
+#[derive(clap::Args)]
+pub struct Args {
+    #[arg(short, long)]
+    pub root: PathBuf,
+}
+
+pub fn isolate_with_args(args: Args) -> Result<(), super::Error> {
+    super::isolate(&args.root)
 }
