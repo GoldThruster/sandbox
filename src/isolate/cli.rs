@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 #[derive(clap::Args)]
 pub struct Args {
+    /// The directory to use as root
     #[arg(short, long)]
     pub root: PathBuf,
 }
