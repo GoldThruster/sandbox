@@ -16,7 +16,7 @@ pub enum Error {
 
 fn isolate(new_root: Option<&Path>) -> Result<(), Error> {
     let root_dir = new_root.map_or_else(
-        || Cow::Owned(tmp_root_path().expect("unable to create tmp dir")),
+        || Cow::Owned(tmp_root_path().expect("Unable to create tmp dir")),
         Cow::Borrowed,
     );
 
